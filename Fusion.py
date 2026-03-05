@@ -11,6 +11,9 @@ def tilt_compensated_heading(mag_x, mag_y, mag_z, accel_x, accel_y, accel_z):
     ay = accel_y / norm
     az = accel_z / norm
 
+    pitch = math.atan2(-ax, math.sqrt(ay*ay + az*az))
+    roll = math.atan2(ay, az)
+    
     # Tilt compensation
     Xh = mag_x * math.cos(ay) + mag_z * math.sin(ay)
     Yh = mag_x * math.sin(ax) * math.sin(ay) + mag_y * math.cos(ax) - mag_z * math.sin(ax) * math.cos(ay)
@@ -20,3 +23,4 @@ def tilt_compensated_heading(mag_x, mag_y, mag_z, accel_x, accel_y, accel_z):
     if heading_deg < 0:
         heading_deg += 360
     return heading_deg
+
