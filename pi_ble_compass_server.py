@@ -7,7 +7,7 @@ import struct
 import time
 from gi.repository import GLib
 
-# ---- YOUR UUIDs (must match Android) ----
+# ----UUIDs (must match Android) ----
 SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 HEADING_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef1"
 
