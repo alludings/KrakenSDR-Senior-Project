@@ -49,7 +49,7 @@ mainloop = None
 # SENSOR CLASSES
 # =========================================================
 class MMC5603:
-    def __init__(self, bus=13):
+    def __init__(self, bus=1):
         self.bus = smbus2.SMBus(bus)
 
         # Replace these with your real calibration values
@@ -82,7 +82,7 @@ class MMC5603:
 
 
 class LSM6DSOX:
-    def __init__(self, bus=14):
+    def __init__(self, bus=1):
         self.bus = smbus2.SMBus(bus)
         self._init_sensor()
 
@@ -160,8 +160,8 @@ def tilt_compensated_heading(mag_x, mag_y, mag_z, accel_x, accel_y, accel_z):
 # =========================================================
 # GLOBAL DEVICES / STATE
 # =========================================================
-mag_sensor = MMC5603(bus=13)
-imu_sensor = LSM6DSOX(bus=14)
+mag_sensor = MMC5603(bus=1)
+imu_sensor = LSM6DSOX(bus=1)
 heading_history = deque(maxlen=SMOOTHING_WINDOW)
 
 
