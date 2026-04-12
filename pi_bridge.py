@@ -198,27 +198,30 @@ def read_imu():
 
 
 def compute_final_heading():
-    doa = read_kraken_doa()
-    if not doa:
-        return None
-
-    confidence = int(doa.get("confidence", 0))
-    if confidence < CONFIDENCE_MIN:
-        print(f"[OUT] low confidence: {confidence}")
-        return None
-
     imu = read_imu()
     if imu is None:
+        print("[OUT] no IMU")
         return None
 
-    kraken_bearing = float(doa["bearing"])
     imu_heading = float(imu["heading"])
 
-    # Final fusion:
-    # signal absolute heading = imu heading + kraken relative bearing
+    doa = read_kraken_doa()
+
+    # Fallback: no Kraken JSON yet, so use IMU only
+    if not doa:
+        print(f"[OUT] IMU only: {imu_heading:.1f}")
+        return imu_heading
+
+    confidence = float(doa.get("confidence", 0.0))
+    if confidence < CONFIDENCE_MIN:
+        print(f"[OUT] low confidence ({confidence:.2f}), using IMU only: {imu_heading:.1f}")
+        return imu_heading
+
+    kraken_bearing = float(doa["bearing"])
+
+    # Fusion: absolute signal heading = tablet heading + relative Kraken bearing
     final_heading = normalize_angle(imu_heading + kraken_bearing)
 
-    # Smooth with circular mean
     heading_history.append(final_heading)
     final_heading_smoothed = circular_mean_deg(list(heading_history))
 
@@ -226,13 +229,12 @@ def compute_final_heading():
         f"[OUT] imu={imu_heading:.1f} "
         f"kraken={kraken_bearing:.1f} "
         f"final={final_heading_smoothed:.1f} "
-        f"conf={confidence} "
+        f"conf={confidence:.2f} "
         f"pitch={imu['pitch']:.1f} "
         f"roll={imu['roll']:.1f}"
     )
 
     return final_heading_smoothed
-
 
 # =========================================================
 # BLE / GATT HELPERS
