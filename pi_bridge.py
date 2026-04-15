@@ -16,7 +16,7 @@ import os
 # =========================================================
 # KILL BUTTON
 # =========================================================
-shutdown_button = Button(17, pull_up=False)
+shutdown_button = Button(17, pull_up=False, hold_time=2)
 
 def shutdown_pi():
     print("Shutdown triggered (GPIO HIGH)")
