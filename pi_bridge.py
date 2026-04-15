@@ -10,6 +10,19 @@ import smbus2
 import struct
 from collections import deque
 from gi.repository import GLib
+from gpiozero import Button
+import os
+
+# =========================================================
+# KILL BUTTON
+# =========================================================
+shutdown_button = Button(17, pull_up=False)
+
+def shutdown_pi():
+    print("Shutdown triggered (GPIO HIGH)")
+    os.system("sudo shutdown now")
+
+shutdown_button.when_pressed = shutdown_pi
 
 # =========================================================
 # BLE / BLUEZ CONSTANTS
