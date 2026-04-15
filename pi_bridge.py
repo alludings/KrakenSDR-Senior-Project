@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 
+# BLE CLIENT
+# MADE BY NATHAN HOANG
+# Last editted: 4/15/26
+
 import dbus
 import dbus.exceptions
 import dbus.mainloop.glib
 import dbus.service
+
 import json
 import math
 import smbus2
 import struct
+import time
+import os
 from collections import deque
 from gi.repository import GLib
 from gpiozero import Button
-import os
 
 # =========================================================
 # KILL BUTTON
@@ -22,7 +28,7 @@ def shutdown_pi():
     print("Shutdown triggered (GPIO HIGH)")
     os.system("sudo shutdown now")
 
-shutdown_button.when_pressed = shutdown_pi
+shutdown_button.when_held = shutdown_pi
 
 # =========================================================
 # BLE / BLUEZ CONSTANTS
@@ -44,14 +50,14 @@ LE_ADVERTISEMENT_IFACE = "org.bluez.LEAdvertisement1"
 # =========================================================
 # APP CONFIG
 # =========================================================
-LIVE_DOA_PATH = "/home/pi/krakensdr_doa/_share/live_doa.json"
+LIVE_DOA_PATH = "/home/krakenrf/krakensdr_doa/krakensdr_doa/_share/live_doa.json"
 
 # Sensor I2C addresses
 MMC5603_ADDR = 0x30
 LSM6DSOX_ADDR = 0x6A
 
 # Bridge behavior
-CONFIDENCE_MIN = 40
+CONFIDENCE_MIN = 0.4
 UPDATE_MS = 200  # 5 Hz
 SMOOTHING_WINDOW = 5
 
@@ -61,6 +67,7 @@ mainloop = None
 # =========================================================
 # SENSOR CLASSES
 # =========================================================
+
 class MMC5603:
     def __init__(self, bus=1):
         self.bus = smbus2.SMBus(bus)
@@ -100,7 +107,6 @@ class LSM6DSOX:
         self._init_sensor()
 
     def _init_sensor(self):
-        # Keep the register values that already work for you
         self.bus.write_byte_data(LSM6DSOX_ADDR, 0x10, 0x80)  # accel
         self.bus.write_byte_data(LSM6DSOX_ADDR, 0x11, 0x80)  # gyro
 
@@ -172,7 +178,7 @@ def tilt_compensated_heading(mag_x, mag_y, mag_z, accel_x, accel_y, accel_z):
 
 # =========================================================
 # GLOBAL DEVICES / STATE
-# =========================================================
+# ====================================================== 
 mag_sensor = MMC5603(bus=1)
 imu_sensor = LSM6DSOX(bus=1)
 heading_history = deque(maxlen=SMOOTHING_WINDOW)
@@ -199,6 +205,7 @@ def read_imu():
             mag_x, mag_y, mag_z,
             accel_x, accel_y, accel_z
         )
+        print(f"[Raw] mag = ({mag_x:.1f}. {mag_y:.1f}, {mag_z:.1f}")
 
         return {
             "heading": heading,
@@ -215,26 +222,27 @@ def compute_final_heading():
     if imu is None:
         print("[OUT] no IMU")
         return None
-
-    imu_heading = float(imu["heading"])
-
+        
+    imu_heading = float(imu["heading"]) 
+    
     doa = read_kraken_doa()
-
-    # Fallback: no Kraken JSON yet, so use IMU only
+    
     if not doa:
         print(f"[OUT] IMU only: {imu_heading:.1f}")
         return imu_heading
 
-    confidence = float(doa.get("confidence", 0.0))
+    confidence = float(doa.get("confidence", 0))
     if confidence < CONFIDENCE_MIN:
-        print(f"[OUT] low confidence ({confidence:.2f}), using IMU only: {imu_heading:.1f}")
+        print(f"[OUT] low confidence: ({confidence:.2f}), using IMU only: {imu_heading:.1f}")
         return imu_heading
 
     kraken_bearing = float(doa["bearing"])
 
-    # Fusion: absolute signal heading = tablet heading + relative Kraken bearing
-    final_heading = normalize_angle(imu_heading + kraken_bearing)
+    # Final fusion:
+    # signal absolute heading = imu heading + kraken relative bearing (didnt add the imu heading)
+    final_heading = normalize_angle(kraken_bearing)     
 
+    # Smooth with circular mean
     heading_history.append(final_heading)
     final_heading_smoothed = circular_mean_deg(list(heading_history))
 
@@ -242,12 +250,13 @@ def compute_final_heading():
         f"[OUT] imu={imu_heading:.1f} "
         f"kraken={kraken_bearing:.1f} "
         f"final={final_heading_smoothed:.1f} "
-        f"conf={confidence:.2f} "
+        f"conf={confidence} "
         f"pitch={imu['pitch']:.1f} "
         f"roll={imu['roll']:.1f}"
     )
 
     return final_heading_smoothed
+
 
 # =========================================================
 # BLE / GATT HELPERS
@@ -484,7 +493,7 @@ def main():
 
     advert = Advertisement(bus, 0)
     register_app_and_advert(bus, adapter_path, app, advert)
-
+    
     def tick():
         final_heading = compute_final_heading()
         if final_heading is not None:
