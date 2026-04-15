@@ -417,6 +417,7 @@ class HeadingCharacteristic(Characteristic):
         )
 
     def set_heading(self, heading_deg: float):
+        heading_deg = (heading_deg + 180.0) % 360.0
         # Android should decode this as LITTLE_ENDIAN float
         payload = struct.pack("<f", float(heading_deg))
         self.value = dbus.Array([dbus.Byte(b) for b in payload], signature="y")
