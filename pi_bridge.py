@@ -27,7 +27,6 @@ from gpiozero import Button
 # =========================================================
 # KILL BUTTON
 # =========================================================
-# GPIO 17 (physical pin 11) -> button -> GND
 shutdown_button = Button(17, pull_up=True, hold_time=2)
 
 
@@ -77,7 +76,7 @@ imu_sensor = adafruit_lsm6ds.lsm6dsox.LSM6DSOX(i2c)
 
 heading_history = deque(maxlen=SMOOTHING_WINDOW)
 
-# Optional calibration placeholders
+#calibration placeholders
 MAG_X_OFFSET = 0.0
 MAG_Y_OFFSET = 0.0
 MAG_Z_OFFSET = 0.0
