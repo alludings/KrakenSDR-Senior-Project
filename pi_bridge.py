@@ -2,7 +2,8 @@
 
 # BLE CLIENT
 # MADE BY NATHAN HOANG
-# Last editted: 4/15/26
+# Last edited: 4/22/26
+# Last change: Rewritten to use Adafruit libraries 
 
 import dbus
 import dbus.exceptions
@@ -11,22 +12,29 @@ import dbus.service
 
 import json
 import math
-import smbus2
 import struct
-import time
 import os
 from collections import deque
+
+import board
+import busio
+import adafruit_mmc56x3
+import adafruit_lsm6ds.lsm6dsox
+
 from gi.repository import GLib
 from gpiozero import Button
 
 # =========================================================
 # KILL BUTTON
 # =========================================================
-shutdown_button = Button(17, pull_up=False, hold_time=2)
+# GPIO 17 (physical pin 11) -> button -> GND
+shutdown_button = Button(17, pull_up=True, hold_time=2)
+
 
 def shutdown_pi():
-    print("Shutdown triggered (GPIO HIGH)")
+    print("Shutdown triggered")
     os.system("sudo shutdown now")
+
 
 shutdown_button.when_held = shutdown_pi
 
@@ -52,84 +60,30 @@ LE_ADVERTISEMENT_IFACE = "org.bluez.LEAdvertisement1"
 # =========================================================
 LIVE_DOA_PATH = "/home/krakenrf/krakensdr_doa/krakensdr_doa/_share/live_doa.json"
 
-# Sensor I2C addresses
-MMC5603_ADDR = 0x30
-LSM6DSOX_ADDR = 0x6A
-
 # Bridge behavior
-CONFIDENCE_MIN = 0.4
+CONFIDENCE_MIN = 0.40
 UPDATE_MS = 200  # 5 Hz
 SMOOTHING_WINDOW = 5
 
 mainloop = None
 
-
 # =========================================================
-# SENSOR CLASSES
+# SENSOR SETUP (Adafruit libraries)
 # =========================================================
+i2c = busio.I2C(board.SCL, board.SDA)
 
-class MMC5603:
-    def __init__(self, bus=1):
-        self.bus = smbus2.SMBus(bus)
+mag_sensor = adafruit_mmc56x3.MMC5603(i2c)
+imu_sensor = adafruit_lsm6ds.lsm6dsox.LSM6DSOX(i2c)
 
-        # Replace these with your real calibration values
-        self.x_offset = 0.0
-        self.y_offset = 0.0
-        self.z_offset = 0.0
-        self.x_scale = 1.0
-        self.y_scale = 1.0
-        self.z_scale = 1.0
+heading_history = deque(maxlen=SMOOTHING_WINDOW)
 
-        self._init_sensor()
-
-    def _init_sensor(self):
-        # Keep this if it already works in your setup
-        self.bus.write_byte_data(MMC5603_ADDR, 0x1B, 0x01)
-
-    def read_raw(self):
-        data = self.bus.read_i2c_block_data(MMC5603_ADDR, 0x00, 6)
-        x = (data[0] << 8) | data[1]
-        y = (data[2] << 8) | data[3]
-        z = (data[4] << 8) | data[5]
-        return x, y, z
-
-    def read_calibrated(self):
-        x, y, z = self.read_raw()
-        x = (x - self.x_offset) * self.x_scale
-        y = (y - self.y_offset) * self.y_scale
-        z = (z - self.z_offset) * self.z_scale
-        return x, y, z
-
-
-class LSM6DSOX:
-    def __init__(self, bus=1):
-        self.bus = smbus2.SMBus(bus)
-        self._init_sensor()
-
-    def _init_sensor(self):
-        self.bus.write_byte_data(LSM6DSOX_ADDR, 0x10, 0x80)  # accel
-        self.bus.write_byte_data(LSM6DSOX_ADDR, 0x11, 0x80)  # gyro
-
-    @staticmethod
-    def _twos_complement(val, bits):
-        if val & (1 << (bits - 1)):
-            val -= 1 << bits
-        return val
-
-    def read_accel(self):
-        data = self.bus.read_i2c_block_data(LSM6DSOX_ADDR, 0x28, 6)
-        x = self._twos_complement((data[1] << 8) | data[0], 16)
-        y = self._twos_complement((data[3] << 8) | data[2], 16)
-        z = self._twos_complement((data[5] << 8) | data[4], 16)
-        return x, y, z
-
-    def read_gyro(self):
-        data = self.bus.read_i2c_block_data(LSM6DSOX_ADDR, 0x22, 6)
-        x = self._twos_complement((data[1] << 8) | data[0], 16)
-        y = self._twos_complement((data[3] << 8) | data[2], 16)
-        z = self._twos_complement((data[5] << 8) | data[4], 16)
-        return x, y, z
-
+# Optional calibration placeholders
+MAG_X_OFFSET = 0.0
+MAG_Y_OFFSET = 0.0
+MAG_Z_OFFSET = 0.0
+MAG_X_SCALE = 1.0
+MAG_Y_SCALE = 1.0
+MAG_Z_SCALE = 1.0
 
 # =========================================================
 # SENSOR / FUSION HELPERS
@@ -177,20 +131,14 @@ def tilt_compensated_heading(mag_x, mag_y, mag_z, accel_x, accel_y, accel_z):
 
 
 # =========================================================
-# GLOBAL DEVICES / STATE
-# ====================================================== 
-mag_sensor = MMC5603(bus=1)
-imu_sensor = LSM6DSOX(bus=1)
-heading_history = deque(maxlen=SMOOTHING_WINDOW)
-
-
-# =========================================================
 # KRAKEN + IMU READERS
 # =========================================================
 def read_kraken_doa():
     try:
         with open(LIVE_DOA_PATH, "r") as f:
             return json.load(f)
+    except FileNotFoundError:
+        return None
     except Exception as e:
         print("[KRAKEN] read error:", e)
         return None
@@ -198,14 +146,39 @@ def read_kraken_doa():
 
 def read_imu():
     try:
-        mag_x, mag_y, mag_z = mag_sensor.read_calibrated()
-        accel_x, accel_y, accel_z = imu_sensor.read_accel()
+        mag_x_raw, mag_y_raw, mag_z_raw = mag_sensor.magnetic
+        accel_x_raw, accel_y_raw, accel_z_raw = imu_sensor.acceleration
+
+        # Magnetometer remap:
+        # new x = old y
+        # new y = old x
+        # new z = -old z
+        mag_x = mag_y_raw
+        mag_y = mag_x_raw
+        mag_z = -mag_z_raw
+
+        # Accelerometer remap:
+        # new x = -old x
+        # new y = old y
+        # new z = -old z
+        accel_x = -accel_x_raw
+        accel_y = accel_y_raw
+        accel_z = -accel_z_raw
+
+        # Optional calibration after remap
+        mag_x = (mag_x - MAG_X_OFFSET) * MAG_X_SCALE
+        mag_y = (mag_y - MAG_Y_OFFSET) * MAG_Y_SCALE
+        mag_z = (mag_z - MAG_Z_OFFSET) * MAG_Z_SCALE
 
         heading, pitch, roll = tilt_compensated_heading(
             mag_x, mag_y, mag_z,
             accel_x, accel_y, accel_z
         )
-        print(f"[Raw] mag = ({mag_x:.1f}. {mag_y:.1f}, {mag_z:.1f}")
+
+        print(
+            f"[RAW] mag=({mag_x:.2f}, {mag_y:.2f}, {mag_z:.2f}) "
+            f"accel=({accel_x:.2f}, {accel_y:.2f}, {accel_z:.2f})"
+        )
 
         return {
             "heading": heading,
@@ -222,27 +195,25 @@ def compute_final_heading():
     if imu is None:
         print("[OUT] no IMU")
         return None
-        
-    imu_heading = float(imu["heading"]) 
-    
+
+    imu_heading = float(imu["heading"])
     doa = read_kraken_doa()
-    
+
+    # Fallback: no Kraken JSON yet, so use IMU only
     if not doa:
         print(f"[OUT] IMU only: {imu_heading:.1f}")
         return imu_heading
 
-    confidence = float(doa.get("confidence", 0))
+    confidence = float(doa.get("confidence", 0.0))
     if confidence < CONFIDENCE_MIN:
-        print(f"[OUT] low confidence: ({confidence:.2f}), using IMU only: {imu_heading:.1f}")
+        print(f"[OUT] low confidence ({confidence:.2f}), using IMU only: {imu_heading:.1f}")
         return imu_heading
 
     kraken_bearing = float(doa["bearing"])
 
-    # Final fusion:
-    # signal absolute heading = imu heading + kraken relative bearing (didnt add the imu heading)
-    final_heading = normalize_angle(kraken_bearing)     
+    # Fusion: absolute signal heading = imu heading + kraken relative bearing
+    final_heading = normalize_angle(imu_heading + kraken_bearing)
 
-    # Smooth with circular mean
     heading_history.append(final_heading)
     final_heading_smoothed = circular_mean_deg(list(heading_history))
 
@@ -250,7 +221,7 @@ def compute_final_heading():
         f"[OUT] imu={imu_heading:.1f} "
         f"kraken={kraken_bearing:.1f} "
         f"final={final_heading_smoothed:.1f} "
-        f"conf={confidence} "
+        f"conf={confidence:.2f} "
         f"pitch={imu['pitch']:.1f} "
         f"roll={imu['roll']:.1f}"
     )
@@ -440,7 +411,6 @@ class HeadingCharacteristic(Characteristic):
 
     def set_heading(self, heading_deg: float):
         heading_deg = (heading_deg + 180.0) % 360.0
-        # Android should decode this as LITTLE_ENDIAN float
         payload = struct.pack("<f", float(heading_deg))
         self.value = dbus.Array([dbus.Byte(b) for b in payload], signature="y")
 
@@ -493,7 +463,7 @@ def main():
 
     advert = Advertisement(bus, 0)
     register_app_and_advert(bus, adapter_path, app, advert)
-    
+
     def tick():
         final_heading = compute_final_heading()
         if final_heading is not None:
