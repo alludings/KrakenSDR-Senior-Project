@@ -511,3 +511,5 @@ def main():
     print("Heading Char UUID:", HEADING_CHAR_UUID)
     mainloop.run()
 
+if __name__ == "__main__":
+    main()
